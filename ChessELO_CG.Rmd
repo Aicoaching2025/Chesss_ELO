@@ -1,0 +1,161 @@
+---
+title: "Chess ELO Calculations"
+author: "Candace Grant"
+date: "2025-09-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+### Load required libraries
+```{r}
+library(readr)
+library(dplyr)
+library(stringr)
+```
+### Chess Data exploration and ELO Analysis
+**Chess ELO Expected Score Calculator
+# Formula source: Solon, Nate. "How Elo Ratings Actually Work." Zwischenzug, 
+# https://zwischenzug.substack.com/p/how-elo-ratings-actually-work**
+```{r}
+chess_data <- read_csv("chess_tournament_results.csv")
+
+# Display data structure
+str(chess_data)
+head(chess_data)
+
+# Clean the data - remove header row and invalid entries
+clean_data <- chess_data %>%
+  filter(!is.na(Player_Name), 
+         Player_Name != "Player Name",
+         !is.na(Total_Points),
+         !is.na(Pre_Rating),
+         !is.na(Opponent_Ratings),
+         Opponent_Ratings != "")
+
+cat("Clean data count:", nrow(clean_data), "\n")
+
+# Function to calculate expected score using USCF ELO formula
+calculate_expected_score <- function(player_rating, opponent_ratings) {
+  expected_scores <- sapply(opponent_ratings, function(opp_rating) {
+    1 / (1 + 10^((opp_rating - player_rating) / 400))
+  })
+  return(sum(expected_scores))
+}
+```
+### Analysis Functions
+
+```{r}
+# Function to parse opponent ratings from semicolon-separated string
+parse_opponent_ratings <- function(opponent_string) {
+  ratings <- as.numeric(unlist(strsplit(opponent_string, ";")))
+  return(ratings[!is.na(ratings)])  # Remove any NA values
+}
+
+# Calculate expected scores and performance for each player
+results <- clean_data %>%
+  rowwise() %>%
+  mutate(
+    opponent_ratings_list = list(parse_opponent_ratings(Opponent_Ratings)),
+    games_played = length(opponent_ratings_list),
+    expected_score = calculate_expected_score(Pre_Rating, opponent_ratings_list),
+    performance = Total_Points - expected_score
+  ) %>%
+  ungroup() %>%
+  arrange(desc(performance))
+```
+### Summary Statistics and Top Performers
+
+```{r}
+# Display summary statistics
+cat("\n=== ANALYSIS SUMMARY ===\n")
+cat("Total players analyzed:", nrow(results), "\n")
+cat("Mean performance difference:", round(mean(results$performance), 3), "\n")
+cat("Standard deviation of performance:", round(sd(results$performance), 3), "\n\n")
+```
+### Top 5 Overperformers and Underperformers
+
+```{r}
+# Top 5 Overperformers
+cat("=== TOP 5 OVERPERFORMERS ===\n")
+top_overperformers <- head(results, 5)
+for(i in 1:5) {
+  player <- top_overperformers[i, ]
+  cat(sprintf("%d. %s (%s)\n", i, player$Player_Name, player$State))
+  cat(sprintf("   Pre-Tournament Rating: %d\n", player$Pre_Rating))
+  cat(sprintf("   Actual Score: %.1f\n", player$Total_Points))
+  cat(sprintf("   Expected Score: %.2f\n", player$expected_score))
+  cat(sprintf("   Overperformance: +%.2f points\n", player$performance))
+  cat(sprintf("   Games Played: %d\n\n", player$games_played))
+}
+
+# Top 5 Underperformers
+cat("=== TOP 5 UNDERPERFORMERS ===\n")
+bottom_performers <- tail(results, 5)
+bottom_performers <- bottom_performers[order(bottom_performers$performance), ]
+for(i in 1:5) {
+  player <- bottom_performers[i, ]
+  cat(sprintf("%d. %s (%s)\n", i, player$Player_Name, player$State))
+  cat(sprintf("   Pre-Tournament Rating: %d\n", player$Pre_Rating))
+  cat(sprintf("   Actual Score: %.1f\n", player$Total_Points))
+  cat(sprintf("   Expected Score: %.2f\n", player$expected_score))
+  cat(sprintf("   Underperformance: %.2f points\n", player$performance))
+  cat(sprintf("   Games Played: %d\n\n", player$games_played))
+}
+```
+### Save and Visualize Results
+
+```{r}
+# Create a summary dataframe for further analysis
+performance_summary <- results %>%
+  select(Player_Name, State, Pre_Rating, Total_Points, expected_score, 
+         performance, games_played) %>%
+  mutate(
+    expected_score = round(expected_score, 2),
+    performance = round(performance, 2)
+  )
+
+# Save results to CSV for further analysis
+write_csv(performance_summary, "chess_performance_analysis.csv")
+cat("Results saved to 'chess_performance_analysis.csv'\n")
+```
+### Data Visualization
+
+```{r}
+# Data visualizations
+if(require(ggplot2, quietly = TRUE)) {
+  
+  # Performance distribution histogram
+  p1 <- ggplot(performance_summary, aes(x = performance)) +
+    geom_histogram(bins = 20, fill = "steelblue", alpha = 0.7) +
+    geom_vline(xintercept = 0, color = "red", linetype = "dashed") +
+    labs(title = "Distribution of Performance (Actual - Expected Score)",
+         x = "Performance Difference",
+         y = "Count") +
+    theme_minimal()
+  
+  print(p1)
+  
+  # Scatter plot: Rating vs Performance
+  p2 <- ggplot(performance_summary, aes(x = Pre_Rating, y = performance)) +
+    geom_point(alpha = 0.6) +
+    geom_smooth(method = "lm", se = TRUE, color = "red") +
+    geom_hline(yintercept = 0, color = "blue", linetype = "dashed") +
+    labs(title = "Pre-Tournament Rating vs Performance",
+         x = "Pre-Tournament Rating",
+         y = "Performance (Actual - Expected)") +
+    theme_minimal()
+  
+  print(p2)
+  
+} else {
+  cat("Install ggplot2 package for visualizations: install.packages('ggplot2')\n")
+}
+
+# Display final results table
+cat("\n=== COMPLETE RESULTS (sorted by performance) ===\n")
+print(performance_summary, n = Inf)
+```
+
+
